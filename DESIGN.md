@@ -166,3 +166,109 @@ Objective is a **pluggable input**, not hardcoded — different stakeholders opt
   Mostly a Tier 2 payoff (needs real geography / OSM).
 - *Possible heatmap refinement:* normalize queue **per lane** so cross-gate severity compares
   fairly (a small absolute queue at a 3-lane gate can be worse than a larger one at the 7-lane gate).
+
+## 16. Tier 1: demand & road-network model
+
+### 16.1 Layered topology
+
+Gates sit on **access roads that cross the arteries**, not on the arteries themselves, so a
+vehicle's path is three hops:
+
+```
+origin zone --> artery --> [junction: access road meets artery] --> access road --> gate
+```
+
+| Gate | Access road | Artery (junction) |
+|------|-------------|-------------------|
+| Gate 1 | Martin Rd | Zierdt (west) |
+| Gate 9 | Rideout Rd | I-565 (north) |
+| Gate 10 | Patton Rd | I-565 (north) |
+| Gate 7 | Martin Rd | Memorial Pkwy (east) |
+| Gate 3 | Redstone Rd | Memorial Pkwy (east) |
+
+The **junction** is where the reroute decision physically happens (continue along the artery to
+the next gate, or turn off here). *Note:* Martin Rd spans the installation (Gate 1 at its west
+end on Zierdt, Gate 7 at its east end on Memorial) — an internal corridor we flag but do not
+model in Tier 1.
+
+### 16.2 Reroute adjacency = an open chain (river breaks the ring)
+
+Because the south is a river, gates form an **open chain**, not a closed ring. Rerouting is only
+between chain neighbors:
+
+```
+Gate 1 -- Gate 9 -- Gate 10 -- Gate 7 -- Gate 3
+ (W)       (N-W)     (N-E)      (E-N)     (E-S)
+```
+
+Gate 1 can only spill to Gate 9; Gate 3 only to Gate 7; the chain never wraps Gate 3 -> Gate 1.
+
+### 16.3 Origin zones & inflows (locked)
+
+Inflows back-solved from the trusted per-gate totals via regularized reconciliation
+(`tools/estimate_inflows.py`, lam=0.1; we trust gate totals over equal-zone priors). The data
+forces West & North to be the largest zones, because 80% of all entries (G1+G9+G10 = 40k of
+50.5k) occur at the three north/west gates, which only West/North/East can feed.
+
+| Zone | Daily inflow |
+|------|--------------|
+| West/Madison | 15,100 |
+| North/Research | 14,800 |
+| East/Central | 11,700 |
+| South Huntsville | 7,500 |
+| Far South | 1,400 |
+
+### 16.4 Habit OD split matrix (zone -> gate)
+
+Baseline (no-congestion) gate choice. Rerouting perturbs this toward chain-adjacent gates when a
+habit gate is congested. Rows sum to 1.
+
+| Zone | G1 | G9 | G10 | G7 | G3 |
+|------|----|----|----|----|----|
+| West/Madison | 0.45 | 0.45 | 0.10 | | |
+| North/Research | 0.08 | 0.62 | 0.30 | | |
+| East/Central | | 0.50 | 0.32 | 0.18 | |
+| South Huntsville | | | | 0.72 | 0.28 |
+| Far South | | | | 0.08 | 0.92 |
+
+Per-gate arrivals are now an **output** (inflow × OD split, then rerouting), not an input — which
+is what lets load move between gates. With the locked inflows this matrix reproduces the gate
+totals within ~1.6k RMS (G9 lands ~22k vs. 25k target, G10 ~9.7k vs. 7.5k); since inflows are now
+fixed, the matrix rows can be fine-tuned at build time to tighten the baseline before rerouting.
+
+### 16.5 Network diagram
+
+```mermaid
+flowchart LR
+  W["West/Madison<br/>15.1k"]
+  N["North/Research<br/>14.8k"]
+  E["East/Central<br/>11.7k"]
+  S["South Huntsville<br/>7.5k"]
+  FS["Far South<br/>1.4k"]
+
+  subgraph Zierdt["Zierdt Rd · west"]
+    G1["Gate 1<br/>Martin Rd"]
+  end
+  subgraph I565["I-565 · north"]
+    G9["Gate 9<br/>Rideout · MAIN"]
+    G10["Gate 10<br/>Patton"]
+  end
+  subgraph Memorial["Memorial Pkwy · east"]
+    G7["Gate 7<br/>Martin Rd"]
+    G3["Gate 3<br/>Redstone"]
+  end
+
+  W -->|.45| G1
+  W -->|.45| G9
+  W -->|.10| G10
+  N -->|.08| G1
+  N -->|.62| G9
+  N -->|.30| G10
+  E -->|.50| G9
+  E -->|.32| G10
+  E -->|.18| G7
+  S -->|.72| G7
+  S -->|.28| G3
+  FS -->|.08| G7
+  FS -->|.92| G3
+```
