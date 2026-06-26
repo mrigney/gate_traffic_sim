@@ -1,0 +1,50 @@
+# Tier 0 mock scenario. Volume shares are placeholders until real per-gate
+# counts are provided. Lane counts are real (see DESIGN.md §5).
+
+total_daily_volume: 50000
+commercial_fraction: 0.01
+delay_threshold_min: 15 # vehicles waiting longer than this count as "delayed"
+seed: 42
+
+service:
+  regular_min: 4        # fast badge/DBIDS scan on a moving line (seconds)
+  regular_mode: 6
+  regular_max: 9
+  search_prob: 0.04
+  search_extra_min: 60
+  search_extra_max: 240
+  commercial_min: 60
+  commercial_mode: 120
+  commercial_max: 240
+
+gates:
+  - id: gate1
+    name: "Gate 1 - Martin Rd West"
+    lanes: 3
+    open_lanes: 3
+    volume_share: 0.15
+    close_time_h: 21.0
+  - id: gate3
+    name: "Gate 3 - Redstone Rd (SE)"
+    lanes: 3
+    open_lanes: 2
+    volume_share: 0.06   # ~3k/day
+    close_time_h: 13.5
+  - id: gate7
+    name: "Gate 7 - Martin Rd East"
+    lanes: 3
+    open_lanes: 3
+    volume_share: 0.15   # ~7.5k/day
+    close_time_h: 21.0
+  - id: gate9
+    name: "Gate 9 - Rideout Rd (Main)"
+    lanes: 7
+    open_lanes: 7
+    volume_share: 0.50   # ~25k/day (≈half of all traffic)
+    close_time_h: 21.0
+  - id: gate10
+    name: "Gate 10 - Patton Rd"
+    lanes: 3
+    open_lanes: 3
+    volume_share: 0.15
+    close_time_h: 13.5
