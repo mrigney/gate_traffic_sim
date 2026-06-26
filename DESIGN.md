@@ -25,10 +25,10 @@ Gates are sets of parallel single-server lanes (not a pooled M/M/c — see §7).
 The simulation engine talks to the road network only through a fixed **interface** (§4),
 so the network can be swapped without touching the engine. Three tiers, built in order:
 
-- **Tier 0 — no graph.** Each gate is an independent queue with its own arrival stream.
-  Exists to validate queue + guard-allocation mechanics in isolation. *Build first.*
-- **Tier 1 — schematic graph.** Directional origin zones → 3 arteries → access roads → 5 gates,
-  with ring-adjacency rerouting and travel times. *Primary working version.*
+- **Tier 0 — no graph.** ✅ *Implemented.* Each gate is an independent queue with its own
+  arrival stream. Validates queue + guard-allocation mechanics in isolation.
+- **Tier 1 — schematic graph.** ✅ *Implemented.* Directional origin zones → OD split → 5 gates,
+  with open-chain-adjacency rerouting and travel times (§16). Primary working version.
 - **Tier 2 — real network.** Import Huntsville roads from OpenStreetMap (`osmnx`) for real
   travel times and detour costs. Swap-in only; same interface.
 
@@ -272,3 +272,36 @@ flowchart LR
   FS -->|.08| G7
   FS -->|.92| G3
 ```
+
+> The OD matrix above was fine-tuned from §16.4 so the **no-reroute baseline reproduces the
+> trusted gate totals** with the locked inflows (verified: G9 ≈ 24.9k, G1/G7/G10 ≈ 7.5k, G3 ≈ 3.4k).
+
+### 16.6 Rerouting model (implemented)
+
+Each vehicle is generated per (zone, habit-gate) pair, so the baseline OD split is reproduced by
+construction. Then, at the approach decision:
+
+- A fraction `reroute.check_prob` (default 0.25) of **regular** drivers "consult real-time info."
+  Commercial vehicles never reroute (they need the dedicated commercial lane).
+- A checking driver compares their habit gate against its **open chain neighbours** using an
+  estimated cost: `est_queue_wait + travel_time`, where
+  `est_queue_wait = (current vehicles in gate) / open_lanes × mean_service_time`.
+- They divert to the cheapest gate only if it beats the habit gate by more than
+  `reroute.switch_threshold_min` (default 3 min) — hysteresis prevents flapping.
+- A diverted vehicle pays the *extra* drive time (neighbour minus habit) before joining.
+
+Travel times do double duty: they make geographically implausible diversions (a far gate)
+unattractive without needing hard reachability rules.
+
+**Validation (mock scenario, seed 42):** rerouting moved ~4.7k vehicles off the congested gates
+(G9 −1.4k, G10 −0.9k) onto neighbours (G1 +1.6k, G7 +0.9k), cutting overall p95 wait ~20%
+(92→74 min) and easing Gate 10 from 115%→105% utilization — at the cost of busier neighbour
+gates, exactly the spatial-elasticity tradeoff Tier 0 could not capture.
+
+### 16.7 Code map
+
+- `gate_sim/network.py` — `Tier1Network` (the RoadNetwork contract for Tier 1).
+- `gate_sim/demand.py` — `zone_arrivals` (per-zone → per-gate NHPP streams).
+- `gate_sim/simulation.py` — `_t1_*` (Tier 1 vehicle process, `_choose_gate` rerouting logic).
+- `scenarios/tier1.yaml` — zones, inflows, OD matrix, travel times, chain, reroute knobs.
+- Run: `python main.py --config scenarios/tier1.yaml` (add `--no-reroute` for the baseline).

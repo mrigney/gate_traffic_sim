@@ -1,0 +1,68 @@
+# Tier 1 scenario: origin zones -> OD split -> gates, with rerouting.
+#
+# Inflows are locked (DESIGN.md §16.3). The OD matrix is fine-tuned so the
+# no-reroute baseline reproduces the trusted per-gate totals with the locked
+# inflows (G9 ~25k, G1/G7/G10 ~7.5k, G3 ~3k). Travel times (minutes) are
+# schematic free-flow approach times; they also keep implausible reroutes
+# (a far gate) unattractive. Real OSM travel times arrive in Tier 2.
+
+commercial_fraction: 0.01
+delay_threshold_min: 15
+seed: 42
+
+reroute:
+  enabled: true
+  check_prob: 0.25          # fraction of drivers who consult real-time info
+  switch_threshold_min: 3.0 # must save > 3 min of (queue + drive) to divert
+
+service:
+  regular_min: 4
+  regular_mode: 6
+  regular_max: 9
+  search_prob: 0.04
+  search_extra_min: 60
+  search_extra_max: 240
+  commercial_min: 60
+  commercial_mode: 120
+  commercial_max: 240
+
+# Reroute adjacency (open chain; river breaks the ring).
+chain:
+  - [gate1, gate9]
+  - [gate9, gate10]
+  - [gate10, gate7]
+  - [gate7, gate3]
+
+gates:
+  - {id: gate1,  name: "Gate 1 - Martin Rd West",   lanes: 3, open_lanes: 3, close_time_h: 21.0}
+  - {id: gate3,  name: "Gate 3 - Redstone Rd (SE)",  lanes: 3, open_lanes: 2, close_time_h: 13.5}
+  - {id: gate7,  name: "Gate 7 - Martin Rd East",    lanes: 3, open_lanes: 3, close_time_h: 21.0}
+  - {id: gate9,  name: "Gate 9 - Rideout Rd (Main)", lanes: 7, open_lanes: 7, close_time_h: 21.0}
+  - {id: gate10, name: "Gate 10 - Patton Rd",        lanes: 3, open_lanes: 3, close_time_h: 13.5}
+
+zones:
+  - id: west
+    name: "West/Madison"
+    inflow: 15100
+    od:    {gate1: 0.43, gate9: 0.50, gate10: 0.07}
+    travel_time_min: {gate1: 8,  gate9: 12, gate10: 20, gate7: 35, gate3: 40}
+  - id: north
+    name: "North/Research"
+    inflow: 14800
+    od:    {gate1: 0.08, gate9: 0.70, gate10: 0.22}
+    travel_time_min: {gate1: 18, gate9: 8,  gate10: 12, gate7: 28, gate3: 35}
+  - id: east
+    name: "East/Central"
+    inflow: 11700
+    od:    {gate9: 0.58, gate10: 0.24, gate7: 0.18}
+    travel_time_min: {gate1: 30, gate9: 14, gate10: 10, gate7: 16, gate3: 22}
+  - id: south
+    name: "South Huntsville"
+    inflow: 7500
+    od:    {gate7: 0.72, gate3: 0.28}
+    travel_time_min: {gate1: 35, gate9: 25, gate10: 20, gate7: 8,  gate3: 12}
+  - id: farsouth
+    name: "Far South"
+    inflow: 1400
+    od:    {gate7: 0.08, gate3: 0.92}
+    travel_time_min: {gate1: 45, gate9: 35, gate10: 30, gate7: 18, gate3: 10}

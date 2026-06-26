@@ -1,9 +1,13 @@
-"""Arrival generation: a non-homogeneous Poisson process per gate.
+"""Arrival generation: a non-homogeneous Poisson process.
 
 The daily demand *shape* is a fixed relative curve (broad AM ramp, sharp peak,
-midday bump, low baseline). Each gate's expected count over its open window is
-pinned to ``total_daily_volume * volume_share`` by normalising the curve over
-that window. Arrivals are drawn by thinning.
+midday bump, low baseline). Counts are pinned by normalising the curve over the
+relevant open window; arrivals are drawn by thinning.
+
+- Tier 0: one stream per gate (expected = total_volume * gate.volume_share).
+- Tier 1: one stream per (zone, habit-gate) pair (expected = zone.inflow * od),
+  generated over the *gate's* open window so closures are respected by
+  construction. Each vehicle remembers its origin zone and habit gate.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-from .config import GateConfig, SimConfig
+from .config import GateConfig, SimConfig, ZoneConfig
 
 # numpy>=2 renamed trapz -> trapezoid; support both.
 _trapz = getattr(np, "trapezoid", getattr(np, "trapz", None))
@@ -25,14 +29,7 @@ def _gauss(x, mu, sigma):
 
 
 def demand_weight(t_h):
-    """Relative arrival-rate shape as a function of time-of-day (hours).
-
-    Not a probability — just an unnormalised weight. Shapes:
-      - broad morning ramp centred ~08:00
-      - sharp peak ~07:45 (inside the broad ramp)
-      - smaller midday bump ~12:00
-      - small all-day baseline
-    """
+    """Relative arrival-rate shape as a function of time-of-day (hours)."""
     return (
         1.00                              # steady daytime baseline
         + 1.50 * _gauss(t_h, 8.00, 0.80)  # broad morning ramp ~07:15-08:45
@@ -41,33 +38,65 @@ def demand_weight(t_h):
     )
 
 
-def gate_arrivals(gate: GateConfig, sim: SimConfig, rng: np.random.Generator) -> List[Arrival]:
-    """Generate the arrival stream for one gate over its open window."""
-    open_s = gate.open_time_h * 3600.0
-    close_s = gate.close_time_h * 3600.0
-    expected = sim.total_daily_volume * gate.volume_share
+def nhpp_times(open_h: float, close_h: float, expected: float,
+               rng: np.random.Generator) -> List[float]:
+    """Draw arrival times (seconds) over [open_h, close_h) whose expected count
+    is `expected`, following the daily demand shape, via thinning."""
+    if expected <= 0 or close_h <= open_h:
+        return []
+    open_s, close_s = open_h * 3600.0, close_h * 3600.0
 
-    # Normalise the weight curve over the gate's open window so that the integral
-    # of the rate equals the expected vehicle count.
-    grid_h = np.linspace(gate.open_time_h, gate.close_time_h, 2000)
+    grid_h = np.linspace(open_h, close_h, 2000)
     w = demand_weight(grid_h)
-    weight_hours = _trapz(w, grid_h)  # area under weight curve, in weight*hours
+    weight_hours = _trapz(w, grid_h)
 
     def rate_per_sec(t_s: float) -> float:
-        # vehicles per second at time t
         return expected * demand_weight(t_s / 3600.0) / (weight_hours * 3600.0)
 
     lam_max = expected * w.max() / (weight_hours * 3600.0)
     if lam_max <= 0:
         return []
 
-    arrivals: List[Arrival] = []
+    times: List[float] = []
     t = open_s
     while True:
         t += rng.exponential(1.0 / lam_max)
         if t >= close_s:
             break
         if rng.random() < rate_per_sec(t) / lam_max:  # thinning accept/reject
-            vtype = "commercial" if rng.random() < sim.commercial_fraction else "regular"
-            arrivals.append((t, vtype))
-    return arrivals
+            times.append(t)
+    return times
+
+
+def gate_arrivals(gate: GateConfig, sim: SimConfig, rng: np.random.Generator) -> List[Arrival]:
+    """Tier 0: arrival stream for one gate."""
+    expected = sim.total_daily_volume * gate.volume_share
+    times = nhpp_times(gate.open_time_h, gate.close_time_h, expected, rng)
+    out: List[Arrival] = []
+    for t in times:
+        vtype = "commercial" if rng.random() < sim.commercial_fraction else "regular"
+        out.append((t, vtype))
+    return out
+
+
+# Tier 1 vehicle: (gate-arrival-decision time, zone_id, habit_gate_id, vtype)
+ZoneArrival = Tuple[float, str, str, str]
+
+
+def zone_arrivals(sim: SimConfig, rng: np.random.Generator) -> List[ZoneArrival]:
+    """Tier 1: arrival stream across all zones, one sub-stream per (zone, gate)
+    habit pair. Returns vehicles tagged with origin zone and habit gate, sorted
+    by time."""
+    gate_by_id = {g.id: g for g in sim.gates}
+    out: List[ZoneArrival] = []
+    for zone in sim.zones:
+        for gate_id, prob in zone.od.items():
+            if prob <= 0 or gate_id not in gate_by_id:
+                continue
+            gate = gate_by_id[gate_id]
+            expected = zone.inflow * prob
+            for t in nhpp_times(gate.open_time_h, gate.close_time_h, expected, rng):
+                vtype = "commercial" if rng.random() < sim.commercial_fraction else "regular"
+                out.append((t, zone.id, gate_id, vtype))
+    out.sort(key=lambda x: x[0])
+    return out

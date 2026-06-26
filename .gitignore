@@ -13,6 +13,7 @@ env/
 
 # Generated simulation output
 outputs/
+outputs*/
 
 # Editor / OS
 .idea/

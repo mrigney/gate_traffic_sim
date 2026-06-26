@@ -44,7 +44,8 @@ class Metrics:
     def sample_queue(self, time_s: float, gate: str, queue: int) -> None:
         self.queue_samples.append(dict(time=time_s, gate=gate, queue=queue))
 
-    def record(self, *, gate, vtype, arrival, start, depart, service, queue_on_arrival) -> None:
+    def record(self, *, gate, vtype, arrival, start, depart, service, queue_on_arrival,
+               zone=None, habit_gate=None, rerouted=False) -> None:
         self.records.append(
             dict(
                 gate=gate,
@@ -55,6 +56,9 @@ class Metrics:
                 service=service,
                 wait=start - arrival,
                 queue_on_arrival=queue_on_arrival,
+                zone=zone,
+                habit_gate=habit_gate,
+                rerouted=rerouted,
             )
         )
 
@@ -134,6 +138,22 @@ class Metrics:
             rows += rows_for(g.id, grouped.get(g.id, []))
         rows += rows_for("ALL", self.records)
         return rows
+
+    def reroute_summary(self) -> dict:
+        """Tier 1 only: how many vehicles diverted, and each gate's net habit ->
+        final flow (negative = lost load to neighbours, positive = absorbed it)."""
+        rerouted = [r for r in self.records if r.get("rerouted")]
+        habit_n = defaultdict(int)
+        final_n = defaultdict(int)
+        for r in self.records:
+            if r.get("habit_gate") is None:
+                continue
+            habit_n[r["habit_gate"]] += 1
+            final_n[r["gate"]] += 1
+        gates = [g.id for g in self.sim.gates]
+        net = {g: final_n[g] - habit_n[g] for g in gates}
+        return dict(total_rerouted=len(rerouted), net_flow=net,
+                    habit=dict(habit_n), final=dict(final_n))
 
     def queue_timeseries(self, bucket_min: float = 15.0):
         """Average queue length per gate per time bucket, from periodic samples.

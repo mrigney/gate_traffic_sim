@@ -27,7 +27,7 @@ def write_vehicles_csv(metrics: Metrics, path: Path) -> None:
         row["arrival_h"] = round(r["arrival"] / 3600.0, 4)
         rows.append(row)
     fields = ["gate", "vtype", "arrival_h", "arrival", "start", "depart",
-              "service", "wait", "queue_on_arrival"]
+              "service", "wait", "queue_on_arrival", "zone", "habit_gate", "rerouted"]
     _write_csv(path, rows, fields)
 
 
